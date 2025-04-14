@@ -31,7 +31,7 @@ def scale_background(image, target_width, target_height):
 
 # Загрузка и масштабирование фонового изображения
 try:
-    background = pygame.image.load('background.png')  # Загружаем фоновое изображение
+    background = pygame.image.load('Assets/background.png')  # Загружаем фоновое изображение
     background = scale_background(background, WIDTH, HEIGHT)  # Масштабируем фон до размеров окна
 except Exception as e:
     print(f"Ошибка загрузки фона: {e}")  # Выводим сообщение об ошибке, если фон не загружается
@@ -39,7 +39,7 @@ except Exception as e:
 
 # Загрузка и воспроизведение фоновой музыки
 try:
-    pygame.mixer.music.load('background_music.mp3')  # Загружаем музыкальный файл
+    pygame.mixer.music.load('Assets/background_music.mp3')  # Загружаем музыкальный файл
     pygame.mixer.music.set_volume(0.5)  # Устанавливаем громкость 50%
     pygame.mixer.music.play(-1)  # Зацикливаем воспроизведение музыки
 except:
@@ -50,7 +50,7 @@ def get_scaled_font():
     scale = min(WIDTH / BASE_WIDTH, HEIGHT / BASE_HEIGHT)  # Вычисляем масштаб относительно базового разрешения
     font_size = int(48 * scale)  # Масштабируем размер шрифта (базовый размер 48)
     try:
-        return pygame.font.Font('pixel_font.ttf', font_size)  # Пытаемся загрузить пиксельный шрифт
+        return pygame.font.Font('Assets/pixel_font.ttf', font_size)  # Пытаемся загрузить пиксельный шрифт
     except:
         return pygame.font.SysFont('monospace', font_size)  # Если не удалось, используем системный шрифт
 
