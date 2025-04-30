@@ -171,7 +171,7 @@ class Option:
 
     # Метод для применения выбранного значения
     def apply(self):
-        global WIDTH, HEIGHT, screen, background, main_menu_buttons, settings_menu_elements, font
+        global WIDTH, HEIGHT, screen, background, main_menu_buttons, settings_menu_elements, font, player, platforms
         if self.label == "Разрешение":  # Если настройка - это разрешение
             res = self.values[self.current_index].split("x")  # Разбиваем строку разрешения на ширину и высоту
             new_width, new_height = int(res[0]), int(res[1])  # Преобразуем в числа
@@ -200,6 +200,14 @@ class Option:
                 back_button_new = Button("Назад", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 + 160, button_width, button_height)
                 settings_menu_elements.clear()  # Очищаем старый список элементов настроек
                 settings_menu_elements.extend([volume_slider_new, resolution_option_new, back_button_new])  # Добавляем новые элементы
+                # Обновляем персонажа и платформы для нового разрешения
+                player = Player(BASE_WIDTH // 2 - 25, BASE_HEIGHT - 200, 50, 50)
+                platforms = [
+                    Platform(0, BASE_HEIGHT - 50, BASE_WIDTH, 50),  # Пол
+                    Platform(BASE_WIDTH // 2 - 150, BASE_HEIGHT - 200, 300, 20),  # Платформа посередине
+                    Platform(BASE_WIDTH // 4 - 100, BASE_HEIGHT - 350, 200, 20),  # Платформа слева
+                    Platform(3 * BASE_WIDTH // 4 - 100, BASE_HEIGHT - 350, 200, 20),  # Платформа справа
+                ]
 
 # Определение базовых размеров кнопок и расстояния между ними
 button_width = 300
@@ -228,7 +236,107 @@ back_button = Button("Назад", BASE_WIDTH // 2 - button_width // 2, BASE_HEI
 # Список элементов меню настроек
 settings_menu_elements = [volume_slider, resolution_option, back_button]
 
-# Переменная для отслеживания текущего меню (главное меню или настройки)
+# Класс для платформ
+class Platform:
+    def __init__(self, x, y, width, height):
+        scale_x = WIDTH / BASE_WIDTH
+        scale_y = HEIGHT / BASE_HEIGHT
+        self.rect = pygame.Rect(x * scale_x, y * scale_y, width * scale_x, height * scale_y)
+        self.color = (0, 255, 0)  # Зеленый цвет платформ
+
+    def draw(self, surface):
+        pygame.draw.rect(surface, self.color, self.rect)
+
+# Класс для персонажа
+class Player:
+    def __init__(self, x, y, width, height):
+        scale_x = WIDTH / BASE_WIDTH
+        scale_y = HEIGHT / BASE_HEIGHT
+        self.rect = pygame.Rect(x * scale_x, y * scale_y, width * scale_x, height * scale_y)
+        self.color = (255, 0, 0)  # Красный цвет персонажа
+        self.vx = 0  # Скорость по горизонтали
+        self.vy = 0  # Скорость по вертикали
+        self.speed = 4  # Максимальная скорость движения
+        self.acceleration = 0.5  # Ускорение
+        self.friction = 0.8  # Трение
+        self.jump_power = -26  # Целевая скорость прыжка
+        self.jump_acceleration = 2.0  # Ускорение для плавного прыжка
+        self.jump_cut = 0.5  # Множитель уменьшения скорости при отпускании прыжка
+        self.gravity = 0.8  # Гравитация
+        self.max_fall_speed = 15  # Максимальная скорость падения
+        self.on_ground = False  # Находится ли персонаж на земле
+        self.is_jumping = False  # Флаг для начала прыжка
+
+    def update(self, platforms, is_jump_held):
+        # Горизонтальное движение
+        keys = pygame.key.get_pressed()
+        target_vx = 0
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+            target_vx = -self.speed
+        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            target_vx = self.speed
+
+        # Плавное ускорение и трение
+        if target_vx != 0:
+            self.vx += (target_vx - self.vx) * self.acceleration
+        else:
+            self.vx *= self.friction
+
+        # Обновление позиции по горизонтали
+        self.rect.x += self.vx
+
+        # Проверка столкновений по горизонтали
+        for platform in platforms:
+            if self.rect.colliderect(platform.rect):
+                if self.vx > 0:  # Движение вправо
+                    self.rect.right = platform.rect.left
+                    self.vx = 0
+                elif self.vx < 0:  # Движение влево
+                    self.rect.left = platform.rect.right
+                    self.vx = 0
+
+        # Вертикальное движение
+        if self.is_jumping:
+            self.vy = self.jump_power * self.jump_acceleration
+            self.is_jumping = False
+
+        # Применение гравитации
+        self.vy += self.gravity
+        if self.vy > self.max_fall_speed:
+            self.vy = self.max_fall_speed
+
+        # Уменьшение высоты прыжка при отпускании клавиши
+        if not is_jump_held and self.vy < 0:
+            self.vy *= self.jump_cut
+
+        # Обновление позиции по вертикали
+        self.rect.y += self.vy
+
+        # Проверка столкновений по вертикали
+        self.on_ground = False
+        for platform in platforms:
+            if self.rect.colliderect(platform.rect):
+                if self.vy > 0:  # Падение вниз
+                    self.rect.bottom = platform.rect.top
+                    self.vy = 0
+                    self.on_ground = True
+                elif self.vy < 0:  # Прыжок вверх
+                    self.rect.top = platform.rect.bottom
+                    self.vy = 0
+
+    def draw(self, surface):
+        pygame.draw.rect(surface, self.color, self.rect)
+
+# Создание стартовой локации
+player = Player(BASE_WIDTH // 2 - 25, BASE_HEIGHT - 200, 50, 50)  # Персонаж в центре
+platforms = [
+    Platform(0, BASE_HEIGHT - 50, BASE_WIDTH, 50),  # Пол
+    Platform(BASE_WIDTH // 2 - 150, BASE_HEIGHT - 200, 300, 20),  # Платформа посередине
+    Platform(BASE_WIDTH // 4 - 100, BASE_HEIGHT - 350, 200, 20),  # Платформа слева
+    Platform(3 * BASE_WIDTH // 4 - 100, BASE_HEIGHT - 350, 200, 20),  # Платформа справа
+]
+
+# Переменная для отслеживания текущего меню (главное меню, настройки или игра)
 current_menu = "main"
 
 # Основной игровой цикл
@@ -236,6 +344,7 @@ running = True
 while running:
     mouse_pos = pygame.mouse.get_pos()  # Получаем текущую позицию курсора мыши
     mouse_pressed = pygame.mouse.get_pressed()[0]  # Проверяем, нажата ли левая кнопка мыши
+    is_jump_held = pygame.key.get_pressed()[pygame.K_SPACE]  # Проверяем, удерживается ли пробел
 
     # Обработка событий Pygame
     for event in pygame.event.get():
@@ -244,12 +353,11 @@ while running:
 
         if current_menu == "main":  # Если текущее меню - главное
             if event.type == pygame.MOUSEBUTTONDOWN:  # Если нажата кнопка мыши
-                # Используем текущие кнопки из списка main_menu_buttons
-                play_button_current = main_menu_buttons[0]  # Кнопка "Играть" - первый элемент
-                settings_button_current = main_menu_buttons[1]  # Кнопка "Настройки" - второй элемент
-                exit_button_current = main_menu_buttons[2]  # Кнопка "Выход" - третий элемент
+                play_button_current = main_menu_buttons[0]
+                settings_button_current = main_menu_buttons[1]
+                exit_button_current = main_menu_buttons[2]
                 if play_button_current.is_hovered(mouse_pos):  # Если нажата кнопка "Играть"
-                    print("Запуск игры!")  # Выводим сообщение (заглушка для запуска игры)
+                    current_menu = "game"  # Переходим в режим игры
                 elif settings_button_current.is_hovered(mouse_pos):  # Если нажата кнопка "Настройки"
                     current_menu = "settings"  # Переходим в меню настроек
                 elif exit_button_current.is_hovered(mouse_pos):  # Если нажата кнопка "Выход"
@@ -257,39 +365,51 @@ while running:
 
         elif current_menu == "settings":  # Если текущее меню - настройки
             if event.type == pygame.MOUSEBUTTONDOWN:  # Если нажата кнопка мыши
-                # Находим текущую кнопку "Назад" в списке settings_menu_elements (последний элемент - кнопка "Назад")
                 back_button_current = settings_menu_elements[-1]
                 if back_button_current.is_hovered(mouse_pos):  # Если нажата кнопка "Назад"
                     current_menu = "main"  # Возвращаемся в главное меню
 
-    # Обновление состояния элементов в зависимости от текущего меню
-    if current_menu == "main":  # Если текущее меню - главное
-        for button in main_menu_buttons:  # Обновляем состояние каждой кнопки
+        elif current_menu == "game":  # Если текущий режим - игра
+            if event.type == pygame.KEYDOWN:  # Обработка нажатий клавиш
+                if event.key == pygame.K_ESCAPE:  # Нажатие ESC возвращает в главное меню
+                    current_menu = "main"
+                elif event.key == pygame.K_SPACE and player.on_ground:  # Начало прыжка
+                    player.is_jumping = True  # Устанавливаем флаг прыжка
+
+    # Обновление состояния элементов
+    if current_menu == "main":  # Главное меню
+        for button in main_menu_buttons:
             button.update(mouse_pos)
-    elif current_menu == "settings":  # Если текущее меню - настройки
-        for element in settings_menu_elements:  # Обновляем состояние каждого элемента
-            if isinstance(element, Slider):  # Если элемент - ползунок
+    elif current_menu == "settings":  # Настройки
+        for element in settings_menu_elements:
+            if isinstance(element, Slider):
                 element.update(mouse_pos, mouse_pressed)
-            elif isinstance(element, Option):  # Если элемент - выбор значения
+            elif isinstance(element, Option):
                 element.update(mouse_pos, mouse_pressed)
-            else:  # Если элемент - кнопка
+            else:
                 element.update(mouse_pos)
+    elif current_menu == "game":  # Режим игры
+        # Обновление персонажа
+        player.update(platforms, is_jump_held)
 
-    # Отрисовка фона
-    if background:
-        screen.blit(background, (0, 0))  # Отрисовываем фон, растянутый на всё окно
+    # Отрисовка
+    if background and current_menu != "game":
+        screen.blit(background, (0, 0))  # Фон для меню
     else:
-        screen.fill(BLACK)  # Если фона нет, заливаем экран черным цветом
+        screen.fill(BLACK)  # Черный фон для игры или если фона нет
 
-    # Отрисовка элементов текущего меню
-    if current_menu == "main":  # Если текущее меню - главное
-        for button in main_menu_buttons:  # Отрисовываем кнопки главного меню
+    if current_menu == "main":
+        for button in main_menu_buttons:
             button.draw(screen)
-    elif current_menu == "settings":  # Если текущее меню - настройки
-        for element in settings_menu_elements:  # Отрисовываем элементы меню настроек
+    elif current_menu == "settings":
+        for element in settings_menu_elements:
             element.draw(screen)
+    elif current_menu == "game":
+        # Отрисовка платформ и персонажа
+        for platform in platforms:
+            platform.draw(screen)
+        player.draw(screen)
 
-    # Обновление экрана для отображения изменений
     pygame.display.flip()
 
 # Завершение работы Pygame и программы
