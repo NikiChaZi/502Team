@@ -1,417 +1,1028 @@
 import pygame
 import sys
+import math
+import random
+from pygame import Vector2
+import asyncio
+import platform
+import os
 
-# Инициализация Pygame для работы с графикой и звуком
+# Constants
+WIDTH, HEIGHT = 800, 600
+FPS = 60
+
+# Animation states
+STAND = "stand"
+WALK = "walk"
+IDLE = "idle"
+DEAD = "dead"
+
+# Sprite sheet configuration
+FRAME_WIDTH = 32
+FRAME_HEIGHT = 32
+ROWS = {
+    STAND: 0,
+    WALK: 1,
+    IDLE: 4,
+    DEAD: 5
+}
+FRAMES_PER_ROW = 8
+
+# Инициализация Pygame
 pygame.init()
 
-# Базовые размеры разрешения для масштабирования интерфейса (используются как эталон)
+# Базовые размеры разрешения для масштабирования
 BASE_WIDTH = 1920
 BASE_HEIGHT = 1080
+ASPECT_RATIO = BASE_WIDTH / BASE_HEIGHT  # 16:9
 
-# Текущие размеры окна игры, могут меняться при выборе разрешения
-WIDTH = 1920
-HEIGHT = 1080
+# Определение начального размера окна на основе экрана
+try:
+    display_info = pygame.display.get_desktop_sizes()[0]
+    WIDTH, HEIGHT = display_info[0], display_info[1]
+except:
+    WIDTH, HEIGHT = 1280, 720  # Резервное разрешение
 
-# Создание окна игры с заданным разрешением и заголовком
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+# Создание окна с поддержкой изменения размера
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Главное меню - Пиксельный платформер")
 
-# Определение цветов в формате RGB
-WHITE = (255, 255, 255)  # Белый цвет для текста и элементов
-GRAY = (150, 150, 150)   # Серый цвет для выделения при наведении
-BLACK = (0, 0, 0)        # Черный цвет для заливки экрана, если фон не загружен
+# Константы
+TILE_SIZE = 32  # Размер тайла
+GRAVITY = 0.8   # Гравитация
+HOOK_RANGE = 300  # Дальность крюка
+HOOK_SPEED = 20   # Скорость крюка
+MIN_ROPE_LENGTH = 50  # Минимальная длина веревки
+ROPE_SPEED = 5    # Скорость изменения длины веревки
+SWING_SPEED = 0.02  # Скорость качания
+DASH_DISTANCE = 100  # Дистанция рывка
+DASH_COOLDOWN = 0.25  # Кулдаун рывка (0.25 сек)
+DASH_DURATION = 0.2  # Длительность рывка (сек)
 
-# Функция для масштабирования фонового изображения до размеров окна
+# Цвета
+WHITE = (255, 255, 255)
+GRAY = (150, 150, 150)
+BLACK = (0, 0, 0)
+CYAN = (0, 255, 255)
+RED = (255, 0, 0)
+
+# Функция для масштабирования фонового изображения
 def scale_background(image, target_width, target_height):
     if image is None:
-        return None  # Возвращаем None, если изображение не загружено
-    # Масштабируем изображение до размеров окна, игнорируя соотношение сторон
-    scaled_image = pygame.transform.scale(image, (target_width, target_height))
-    return scaled_image
-
-# Загрузка и масштабирование фонового изображения
-try:
-    background = pygame.image.load('src/Assets/background.png')  # Загружаем фоновое изображение
-    background = scale_background(background, WIDTH, HEIGHT)  # Масштабируем фон до размеров окна
-except Exception as e:
-    print(f"Ошибка загрузки фона: {e}")  # Выводим сообщение об ошибке, если фон не загружается
-    background = None  # Если загрузка не удалась, фон будет None
-
-# Загрузка и воспроизведение фоновой музыки
-try:
-    pygame.mixer.music.load('src/Resources/background_music.mp3')  # Загружаем музыкальный файл
-    pygame.mixer.music.set_volume(0.5)  # Устанавливаем громкость 50%
-    pygame.mixer.music.play(-1)  # Зацикливаем воспроизведение музыки
-except:
-    print("Не удалось загрузить фоновую музыку")  # Сообщение об ошибке, если музыка не загрузилась
-
-# Функция для получения масштабированного шрифта в зависимости от разрешения
-def get_scaled_font():
-    scale = min(WIDTH / BASE_WIDTH, HEIGHT / BASE_HEIGHT)  # Вычисляем масштаб относительно базового разрешения
-    font_size = int(48 * scale)  # Масштабируем размер шрифта (базовый размер 48)
+        return None
     try:
-        return pygame.font.Font('src/Resources/pixel_font.ttf', font_size)  # Пытаемся загрузить пиксельный шрифт
+        scaled_image = pygame.transform.scale(image, (int(target_width), int(target_height)))
+        return scaled_image
     except:
-        return pygame.font.SysFont('monospace', font_size)  # Если не удалось, используем системный шрифт
+        return None
 
-# Инициализация шрифта с учетом текущего разрешения
-font = get_scaled_font()
+# Функция для размытия изображения
+def blur_surface(surface, blur_radius=5):
+    if surface is None:
+        return None
+    # Конвертируем поверхность в 32-битный формат
+    surface = surface.convert_alpha()
+    width, height = surface.get_size()
+    for _ in range(blur_radius):
+        surface = pygame.transform.smoothscale(surface, (width // 2, height // 2))
+        surface = pygame.transform.smoothscale(surface, (width, height))
+    return surface
+
+# Загрузка фонового изображения для меню
+try:
+    menu_background = pygame.image.load('src/Assets/background_play1.png')
+except Exception as e:
+    print(f"Ошибка загрузки фона меню: {e}")
+    menu_background = None
+
+# Загрузка фонового изображения для уровней
+try:
+    level_background = pygame.image.load('src/Assets/level_background.png')
+except Exception as e:
+    print(f"Ошибка загрузки фона уровня: {e}")
+    level_background = None
+
+# Загрузка фоновой музыки
+try:
+    pygame.mixer.music.load('src/Resources/background_music.mp3')
+    pygame.mixer.music.set_volume(0.5)
+    pygame.mixer.music.play(-1)
+except Exception as e:
+    print(f"Ошибка загрузки музыки: {e}")
+
+# Функция для получения масштабированного шрифта
+def get_scaled_font(scale):
+    font_size = int(48 * scale)
+    try:
+        return pygame.font.Font('src/Resources/pixel_font.ttf', font_size)
+    except:
+        return pygame.font.SysFont('monospace', font_size)
+
+# Функция для расчета области отображения
+def calculate_viewport():
+    global WIDTH, HEIGHT
+    window_aspect = WIDTH / HEIGHT
+    if window_aspect > ASPECT_RATIO:
+        viewport_height = HEIGHT
+        viewport_width = int(HEIGHT * ASPECT_RATIO)
+        scale_factor = viewport_height / BASE_HEIGHT
+        offset = Vector2((WIDTH - viewport_width) / 2, 0)
+    else:
+        viewport_width = WIDTH
+        viewport_height = int(WIDTH / ASPECT_RATIO)
+        scale_factor = viewport_width / BASE_WIDTH
+        offset = Vector2(0, (HEIGHT - viewport_height) / 2)
+    return scale_factor, offset, pygame.Rect(offset.x, offset.y, viewport_width, viewport_height)
+
+# Инициализация масштаба и области отображения
+scale_factor, offset, viewport = calculate_viewport()
+font = get_scaled_font(scale_factor)
+if menu_background:
+    menu_background = scale_background(menu_background, viewport.width, viewport.height)
+if level_background:
+    level_background = scale_background(level_background, viewport.width, viewport.height)
+    level_background_blurred = blur_surface(level_background, blur_radius=5)
 
 # Класс для кнопок меню
 class Button:
     def __init__(self, text, x, y, width, height):
-        self.text = text  # Текст кнопки
-        self.update_rect(x, y, width, height)  # Обновляем размеры и позицию кнопки
-        self.color = WHITE  # Цвет текста кнопки
-        self.hover_color = GRAY  # Цвет текста при наведении
-        self.current_color = self.color  # Текущий цвет текста
+        self.text = text
+        self.base_x, self.base_y = x, y
+        self.base_width, self.base_height = width, height
+        self.update_rect(scale_factor, offset)
+        self.color = WHITE
+        self.hover_color = GRAY
+        self.current_color = self.color
 
-    # Метод для обновления размеров и позиции кнопки с учетом масштаба
-    def update_rect(self, x, y, width, height):
-        scale_x = WIDTH / BASE_WIDTH  # Масштаб по оси X
-        scale_y = HEIGHT / BASE_HEIGHT  # Масштаб по оси Y
-        self.rect = pygame.Rect(x * scale_x, y * scale_y, width * scale_x, height * scale_y)  # Масштабируем прямоугольник кнопки
+    def update_rect(self, scale_factor, offset):
+        self.rect = pygame.Rect(
+            int(self.base_x * scale_factor + offset.x),
+            int(self.base_y * scale_factor + offset.y),
+            int(self.base_width * scale_factor),
+            int(self.base_height * scale_factor)
+        )
 
-    # Метод для отрисовки кнопки на экране
     def draw(self, surface):
-        text_surface = font.render(self.text, True, self.current_color)  # Создаем поверхность с текстом
-        text_rect = text_surface.get_rect(center=self.rect.center)  # Центрируем текст внутри кнопки
-        surface.blit(text_surface, text_rect)  # Отрисовываем текст на экране
+        text_surface = font.render(self.text, True, self.current_color)
+        text_rect = text_surface.get_rect(center=self.rect.center)
+        if viewport.colliderect(text_rect):
+            surface.blit(text_surface, text_rect)
 
-    # Метод для проверки, наведен ли курсор на кнопку
     def is_hovered(self, mouse_pos):
-        return self.rect.collidepoint(mouse_pos)  # Возвращаем True, если курсор над кнопкой
+        return self.rect.collidepoint(mouse_pos)
 
-    # Метод для обновления состояния кнопки (например, изменение цвета при наведении)
     def update(self, mouse_pos):
         if self.is_hovered(mouse_pos):
-            self.current_color = self.hover_color  # Меняем цвет на серый при наведении
+            self.current_color = self.hover_color
         else:
-            self.current_color = self.color  # Возвращаем белый цвет, если курсор не над кнопкой
+            self.current_color = self.color
 
 # Класс для ползунка громкости
 class Slider:
     def __init__(self, label, x, y, width, height, min_val, max_val, initial_val):
-        self.label = label  # Название настройки (например, "Громкость")
-        self.min_val = min_val  # Минимальное значение ползунка (0)
-        self.max_val = max_val  # Максимальное значение ползунка (100)
-        self.value = initial_val  # Начальное значение ползунка
-        self.update_rect(x, y, width, height)  # Обновляем размеры и позицию ползунка
+        self.label = label
+        self.base_x, self.base_y = x, y
+        self.base_width, self.base_height = width, height
+        self.min_val = min_val
+        self.max_val = max_val
+        self.value = initial_val
+        self.update_rect(scale_factor, offset)
 
-    # Метод для обновления размеров и позиции ползунка с учетом масштаба
-    def update_rect(self, x, y, width, height):
-        scale_x = WIDTH / BASE_WIDTH  # Масштаб по оси X
-        scale_y = HEIGHT / BASE_HEIGHT  # Масштаб по оси Y
-        self.rect = pygame.Rect(x * scale_x, y * scale_y, width * scale_x, height * scale_y)  # Масштабируем прямоугольник ползунка
-        self.handle_rect = pygame.Rect(self.rect.x + (self.value / self.max_val) * self.rect.width - 10 * scale_x, self.rect.y - 10 * scale_y, 20 * scale_x, 40 * scale_y)  # Масштабируем ручку ползунка
+    def update_rect(self, scale_factor, offset):
+        self.rect = pygame.Rect(
+            int(self.base_x * scale_factor + offset.x),
+            int(self.base_y * scale_factor + offset.y),
+            int(self.base_width * scale_factor),
+            int(self.base_height * scale_factor)
+        )
+        handle_width = int(20 * scale_factor)
+        self.handle_rect = pygame.Rect(
+            int(self.rect.x + (self.value / self.max_val) * self.rect.width - handle_width / 2),
+            int(self.rect.y - 10 * scale_factor),
+            handle_width,
+            int(40 * scale_factor)
+        )
 
-    # Метод для отрисовки ползунка на экране
     def draw(self, surface):
-        scale_x = WIDTH / BASE_WIDTH  # Масштаб по оси X
-        scale_y = HEIGHT / BASE_HEIGHT  # Масштаб по оси Y
-        label_surface = font.render(self.label, True, WHITE)  # Создаем поверхность с названием настройки
-        surface.blit(label_surface, (self.rect.x - 350 * scale_x, self.rect.y - 10 * scale_y))  # Отрисовываем название слева от ползунка
-        pygame.draw.rect(surface, WHITE, self.rect, int(2 * scale_x))  # Рисуем рамку ползунка
-        pygame.draw.rect(surface, GRAY, self.handle_rect)  # Рисуем ручку ползунка
-        text_surface = font.render(f"{int(self.value)}%", True, WHITE)  # Создаем поверхность с текущим значением громкости
-        surface.blit(text_surface, (self.rect.x + self.rect.width + 20 * scale_x, self.rect.y - 10 * scale_y))  # Отрисовываем значение справа от ползунка
+        label_surface = font.render(self.label, True, WHITE)
+        label_rect = label_surface.get_rect(topleft=(self.rect.x - int(350 * scale_factor), self.rect.y - int(10 * scale_factor)))
+        if viewport.colliderect(label_rect):
+            surface.blit(label_surface, label_rect)
+        pygame.draw.rect(surface, WHITE, self.rect, int(2 * scale_factor))
+        pygame.draw.rect(surface, GRAY, self.handle_rect)
+        text_surface = font.render(f"{int(self.value)}%", True, WHITE)
+        text_rect = text_surface.get_rect(topleft=(self.rect.x + self.rect.width + int(20 * scale_factor), self.rect.y - int(10 * scale_factor)))
+        if viewport.colliderect(text_rect):
+            surface.blit(text_surface, text_rect)
 
-    # Метод для обновления значения ползунка при перемещении
     def update(self, mouse_pos, mouse_pressed):
-        scale_x = WIDTH / BASE_WIDTH  # Масштаб по оси X
-        if mouse_pressed and self.rect.collidepoint(mouse_pos):  # Если мышь нажата и курсор над ползунком
-            self.handle_rect.x = max(self.rect.x, min(mouse_pos[0] - 10 * scale_x, self.rect.x + self.rect.width - 20 * scale_x))  # Ограничиваем движение ручки ползунка
-            if self.handle_rect.x <= self.rect.x:  # Если ручка в крайнем левом положении
-                self.value = self.min_val  # Устанавливаем минимальное значение (0%)
-            elif self.handle_rect.x >= self.rect.x + self.rect.width - 20 * scale_x:  # Если ручка в крайнем правом положении
-                self.value = self.max_val  # Устанавливаем максимальное значение (100%)
+        if mouse_pressed and self.rect.collidepoint(mouse_pos):
+            handle_width = int(20 * scale_factor)
+            self.handle_rect.x = max(self.rect.x, min(mouse_pos[0] - handle_width / 2, self.rect.x + self.rect.width - handle_width))
+            if self.handle_rect.x <= self.rect.x:
+                self.value = self.min_val
+            elif self.handle_rect.x >= self.rect.x + self.rect.width - handle_width:
+                self.value = self.max_val
             else:
-                position_ratio = (self.handle_rect.x - self.rect.x) / (self.rect.width - 20 * scale_x)  # Вычисляем пропорцию положения ручки
-                self.value = self.min_val + position_ratio * (self.max_val - self.min_val)  # Вычисляем новое значение громкости
-            pygame.mixer.music.set_volume(self.value / 100)  # Устанавливаем громкость музыки
+                position_ratio = (self.handle_rect.x - self.rect.x) / (self.rect.width - handle_width)
+                self.value = self.min_val + position_ratio * (self.max_val - self.min_val)
+            try:
+                pygame.mixer.music.set_volume(self.value / 100)
+            except:
+                pass
 
-# Класс для настроек с выбором значения (например, разрешение)
-class Option:
-    def __init__(self, label, x, y, width, values, default_index):
-        self.label = label  # Название настройки (например, "Разрешение")
-        self.values = values  # Список возможных значений (например, ["1920x1080", "1280x720", "800x600"])
-        self.current_index = default_index  # Текущий индекс выбранного значения
-        self.update_rect(x, y, width)  # Обновляем размеры и позицию элемента
+def get_animation_frames(spritesheet, row):
+    frames = []
+    try:
+        for col in range(FRAMES_PER_ROW):
+            frame = spritesheet.subsurface((col * FRAME_WIDTH, row * FRAME_HEIGHT, FRAME_WIDTH, FRAME_HEIGHT))
+            frames.append(frame)
+    except Exception as e:
+        print(f"Ошибка извлечения кадров для строки {row}: {e}")
+        # Добавляем пустой красный кадр в случае ошибки
+        fallback_frame = pygame.Surface((FRAME_WIDTH, FRAME_HEIGHT), pygame.SRCALPHA)
+        fallback_frame.fill(RED)
+        frames.append(fallback_frame)
+    return frames
 
-    # Метод для обновления размеров и позиции элемента с учетом масштаба
-    def update_rect(self, x, y, width):
-        scale_x = WIDTH / BASE_WIDTH  # Масштаб по оси X
-        scale_y = HEIGHT / BASE_HEIGHT  # Масштаб по оси Y
-        self.x = x * scale_x  # Масштабируем координату X
-        self.y = y * scale_y  # Масштабируем координату Y
-        self.width = width * scale_x  # Масштабируем ширину
-        self.left_arrow_rect = pygame.Rect(self.x - 100 * scale_x, self.y, 50 * scale_x, 50 * scale_y)  # Масштабируем область левой стрелки
-        self.right_arrow_rect = pygame.Rect(self.x + self.width + 50 * scale_x, self.y, 50 * scale_x, 50 * scale_y)  # Масштабируем область правой стрелки
-
-    # Метод для отрисовки элемента на экране
-    def draw(self, surface):
-        scale_x = WIDTH / BASE_WIDTH  # Масштаб по оси X
-        scale_y = HEIGHT / BASE_HEIGHT  # Масштаб по оси Y
-        label_surface = font.render(self.label, True, WHITE)  # Создаем поверхность с названием настройки
-        surface.blit(label_surface, (self.x - 400 * scale_x, self.y + 5 * scale_y))  # Отрисовываем название слева от значения
-        value_surface = font.render(str(self.values[self.current_index]), True, WHITE)  # Создаем поверхность с текущим значением
-        surface.blit(value_surface, (self.x, self.y + 5 * scale_y))  # Отрисовываем значение
-        surface.blit(font.render("<", True, WHITE), (self.left_arrow_rect.x, self.left_arrow_rect.y + 5 * scale_y))  # Отрисовываем левую стрелку
-        surface.blit(font.render(">", True, WHITE), (self.right_arrow_rect.x, self.right_arrow_rect.y + 5 * scale_y))  # Отрисовываем правую стрелку
-
-    # Метод для обновления состояния элемента (переключение значений)
-    def update(self, mouse_pos, mouse_pressed):
-        if mouse_pressed:  # Если мышь нажата
-            if self.left_arrow_rect.collidepoint(mouse_pos) and self.current_index > 0:  # Если нажата левая стрелка и есть предыдущее значение
-                self.current_index -= 1  # Уменьшаем индекс значения
-                self.apply()  # Применяем новое значение
-            elif self.right_arrow_rect.collidepoint(mouse_pos) and self.current_index < len(self.values) - 1:  # Если нажата правая стрелка и есть следующее значение
-                self.current_index += 1  # Увеличиваем индекс значения
-                self.apply()  # Применяем новое значение
-
-    # Метод для применения выбранного значения
-    def apply(self):
-        global WIDTH, HEIGHT, screen, background, main_menu_buttons, settings_menu_elements, font, player, platforms
-        if self.label == "Разрешение":  # Если настройка - это разрешение
-            res = self.values[self.current_index].split("x")  # Разбиваем строку разрешения на ширину и высоту
-            new_width, new_height = int(res[0]), int(res[1])  # Преобразуем в числа
-            if new_width != WIDTH or new_height != HEIGHT:  # Если новое разрешение отличается от текущего
-                WIDTH, HEIGHT = new_width, new_height  # Обновляем глобальные переменные разрешения
-                screen = pygame.display.set_mode((WIDTH, HEIGHT))  # Устанавливаем новое разрешение окна
-                try:
-                    # Заново загружаем и масштабируем фон для нового разрешения
-                    background = scale_background(pygame.image.load('src/Assets/background.png'), WIDTH, HEIGHT)
-                except Exception as e:
-                    print(f"Ошибка обновления фона: {e}")  # Выводим сообщение об ошибке
-                    background = None  # Если не удалось обновить фон, устанавливаем None
-                font = get_scaled_font()  # Обновляем шрифт с учетом нового масштаба
-                button_width = 300  # Ширина кнопок
-                button_height = 80  # Высота кнопок
-                button_spacing = 20  # Расстояние между кнопками
-                # Создаем новые кнопки главного меню с учетом базового разрешения
-                play_button = Button("Играть", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 - button_height - button_spacing, button_width, button_height)
-                settings_button = Button("Настройки", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2, button_width, button_height)
-                exit_button = Button("Выход", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 + button_height + button_spacing, button_width, button_height)
-                main_menu_buttons.clear()  # Очищаем старый список кнопок
-                main_menu_buttons.extend([play_button, settings_button, exit_button])  # Добавляем новые кнопки
-                # Создаем новые элементы меню настроек
-                volume_slider_new = Slider("Громкость", BASE_WIDTH // 2 + 0, BASE_HEIGHT // 2 - 80, 300, 20, 0, 100, settings_menu_elements[0].value)
-                resolution_option_new = Option("Разрешение", BASE_WIDTH // 2 + 50, BASE_HEIGHT // 2, 300, resolutions, self.current_index)
-                back_button_new = Button("Назад", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 + 160, button_width, button_height)
-                settings_menu_elements.clear()  # Очищаем старый список элементов настроек
-                settings_menu_elements.extend([volume_slider_new, resolution_option_new, back_button_new])  # Добавляем новые элементы
-                # Обновляем персонажа и платформы для нового разрешения
-                player = Player(BASE_WIDTH // 2 - 25, BASE_HEIGHT - 200, 50, 50)
-                platforms = [
-                    Platform(0, BASE_HEIGHT - 50, BASE_WIDTH, 50),  # Пол
-                    Platform(BASE_WIDTH // 2 - 150, BASE_HEIGHT - 200, 300, 20),  # Платформа посередине
-                    Platform(BASE_WIDTH // 4 - 100, BASE_HEIGHT - 350, 200, 20),  # Платформа слева
-                    Platform(3 * BASE_WIDTH // 4 - 100, BASE_HEIGHT - 350, 200, 20),  # Платформа справа
-                ]
-
-# Определение базовых размеров кнопок и расстояния между ними
-button_width = 300
-button_height = 80
-button_spacing = 20
-
-# Создание кнопок главного меню
-play_button = Button("Играть", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 - button_height - button_spacing, button_width, button_height)
-settings_button = Button("Настройки", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2, button_width, button_height)
-exit_button = Button("Выход", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 + button_height + button_spacing, button_width, button_height)
-
-# Список кнопок главного меню
-main_menu_buttons = [play_button, settings_button, exit_button]
-
-# Создание ползунка громкости
-volume_slider = Slider("Громкость", BASE_WIDTH // 2 + 0, BASE_HEIGHT // 2 - 80, 300, 20, 0, 100, 50)
-
-# Список доступных разрешений для выбора
-resolutions = ["1920x1080", "1280x720", "800x600"]
-# Создание элемента выбора разрешения
-resolution_option = Option("Разрешение", BASE_WIDTH // 2 + 50, BASE_HEIGHT // 2, 300, resolutions, 0)
-
-# Создание кнопки "Назад" для меню настроек
-back_button = Button("Назад", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 + 160, button_width, button_height)
-
-# Список элементов меню настроек
-settings_menu_elements = [volume_slider, resolution_option, back_button]
-
-# Класс для платформ
-class Platform:
-    def __init__(self, x, y, width, height):
-        scale_x = WIDTH / BASE_WIDTH
-        scale_y = HEIGHT / BASE_HEIGHT
-        self.rect = pygame.Rect(x * scale_x, y * scale_y, width * scale_x, height * scale_y)
-        self.color = (0, 255, 0)  # Зеленый цвет платформ
-
-    def draw(self, surface):
-        pygame.draw.rect(surface, self.color, self.rect)
-
-# Класс для персонажа
+# Класс игрока
 class Player:
-    def __init__(self, x, y, width, height):
-        scale_x = WIDTH / BASE_WIDTH
-        scale_y = HEIGHT / BASE_HEIGHT
-        self.rect = pygame.Rect(x * scale_x, y * scale_y, width * scale_x, height * scale_y)
-        self.color = (255, 0, 0)  # Красный цвет персонажа
-        self.vx = 0  # Скорость по горизонтали
-        self.vy = 0  # Скорость по вертикали
-        self.speed = 4  # Максимальная скорость движения
-        self.acceleration = 0.5  # Ускорение
-        self.friction = 0.8  # Трение
-        self.jump_power = -26  # Целевая скорость прыжка
-        self.jump_acceleration = 2.0  # Ускорение для плавного прыжка
-        self.jump_cut = 0.5  # Множитель уменьшения скорости при отпускании прыжка
-        self.gravity = 0.8  # Гравитация
-        self.max_fall_speed = 15  # Максимальная скорость падения
-        self.on_ground = False  # Находится ли персонаж на земле
-        self.is_jumping = False  # Флаг для начала прыжка
-
-    def update(self, platforms, is_jump_held):
-        # Горизонтальное движение
-        keys = pygame.key.get_pressed()
-        target_vx = 0
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            target_vx = -self.speed
-        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            target_vx = self.speed
-
-        # Плавное ускорение и трение
-        if target_vx != 0:
-            self.vx += (target_vx - self.vx) * self.acceleration
-        else:
-            self.vx *= self.friction
-
-        # Обновление позиции по горизонтали
-        self.rect.x += self.vx
-
-        # Проверка столкновений по горизонтали
-        for platform in platforms:
-            if self.rect.colliderect(platform.rect):
-                if self.vx > 0:  # Движение вправо
-                    self.rect.right = platform.rect.left
-                    self.vx = 0
-                elif self.vx < 0:  # Движение влево
-                    self.rect.left = platform.rect.right
-                    self.vx = 0
-
-        # Вертикальное движение
-        if self.is_jumping:
-            self.vy = self.jump_power * self.jump_acceleration
-            self.is_jumping = False
-
-        # Применение гравитации
-        self.vy += self.gravity
-        if self.vy > self.max_fall_speed:
-            self.vy = self.max_fall_speed
-
-        # Уменьшение высоты прыжка при отпускании клавиши
-        if not is_jump_held and self.vy < 0:
-            self.vy *= self.jump_cut
-
-        # Обновление позиции по вертикали
-        self.rect.y += self.vy
-
-        # Проверка столкновений по вертикали
+    def __init__(self, x, y):
+        self.pos = Vector2(x, y)
+        self.vel = Vector2(0, 0)
+        self.acc = Vector2(0, 0)
+        self.rect = pygame.Rect(x, y, 24, 32)
+        self.speed = 5
+        self.jump_power = -15
         self.on_ground = False
-        for platform in platforms:
-            if self.rect.colliderect(platform.rect):
-                if self.vy > 0:  # Падение вниз
-                    self.rect.bottom = platform.rect.top
-                    self.vy = 0
+        self.hook_state = None
+        self.hook_pos = None
+        self.hook_vel = None
+        self.hook_origin = None
+        self.swing_angle = 0
+        self.swing_speed = 0
+        self.facing_right = True
+        self.rope_length = 0
+        self.dash_timer = 0
+        self.dash_cooldown = DASH_COOLDOWN
+        self.dash_time = 0
+        self.dash_duration = DASH_DURATION
+        self.dash_direction = 0
+        self.health = 100
+        self.last_movement_time = pygame.time.get_ticks()
+
+        # Загрузка спрайт-листа
+        SPRITESHEET_PATH = 'src/Assets/character_spritesheet.png'
+        try:
+            spritesheet = pygame.image.load(SPRITESHEET_PATH).convert_alpha()
+            self.animations = {
+                STAND: get_animation_frames(spritesheet, ROWS[STAND]),
+                WALK: get_animation_frames(spritesheet, ROWS[WALK]),
+                IDLE: get_animation_frames(spritesheet, ROWS[IDLE]),
+                DEAD: get_animation_frames(spritesheet, ROWS[DEAD])
+            }
+            self.image_loaded = True
+        except Exception as e:
+            print(f"Ошибка загрузки спрайт-листа: {e}")
+            self.image_loaded = False
+            self.animations = {state: [pygame.Surface((24, 32), pygame.SRCALPHA)] for state in [STAND, WALK, IDLE, DEAD]}
+            for state in self.animations:
+                self.animations[state][0].fill(RED)
+
+        self.state = STAND
+        self.frame_index = 0
+        self.image = self.animations[self.state][self.frame_index]
+        self.last_update = pygame.time.get_ticks()
+        self.frame_rate = 100  # milliseconds
+
+    def update_animation(self, dt, keys):
+        now = pygame.time.get_ticks()
+        moving = False
+
+        # Movement and state logic
+        if self.health <= 0:
+            self.state = DEAD
+        else:
+            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                self.move_left()
+                moving = True
+            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                self.move_right()
+                moving = True
+            if keys[pygame.K_w] or keys[pygame.K_UP]:
+                self.vel.y = -self.speed
+                moving = True
+            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                self.vel.y = self.speed
+                moving = True
+
+            if self.hook_state == "attached":
+                self.state = WALK  # Используем WALK для качания
+            elif self.vel.y != 0 and not self.on_ground:
+                self.state = WALK  # Используем WALK для прыжков
+            elif moving:
+                self.state = WALK
+                self.last_movement_time = now
+            else:
+                if now - self.last_movement_time > 1000:
+                    self.state = IDLE
+                else:
+                    self.state = STAND
+
+        # Animation frame update
+        if now - self.last_update > self.frame_rate:
+            self.frame_index = (self.frame_index + 1) % len(self.animations[self.state])
+            self.last_update = now
+
+        self.image = self.animations[self.state][self.frame_index]
+
+    def get_current_frame(self, scale_factor):
+        scaled_frame = pygame.transform.scale(self.image, (int(24 * scale_factor), int(32 * scale_factor)))
+        if not self.facing_right:
+            scaled_frame = pygame.transform.flip(scaled_frame, True, False)
+        return scaled_frame
+
+    def update(self, level, dt, keys):
+        if self.dash_timer > 0:
+            self.dash_timer -= dt
+        if self.dash_time > 0:
+            self.handle_dash(level, dt)
+        if self.hook_state == "attached":
+            self.handle_swinging(level)
+        else:
+            self.apply_physics(level)
+            if self.hook_state in ["extending", "retracting"]:
+                self.handle_hook_motion(level)
+        self.rect.x = int(self.pos.x)
+        self.rect.y = int(self.pos.y)
+        # Обновление анимации
+        self.update_animation(dt, keys)
+        # Обновление направления для поворота спрайта
+        if self.hook_state != "attached" and self.vel.x != 0:
+            self.facing_right = self.vel.x > 0
+
+    def apply_physics(self, level):
+        self.acc.y = GRAVITY
+        self.vel += self.acc
+        self.vel.x *= 0.9
+        self.vel.y = min(self.vel.y, 20)
+        self.pos.y += self.vel.y
+        self.rect.y = int(self.pos.y)
+        self.check_collision_y(level)
+        self.pos.x += self.vel.x
+        self.rect.x = int(self.pos.x)
+        self.check_collision_x(level)
+
+    def check_collision_x(self, level):
+        for tile in level.tiles:
+            if self.rect.colliderect(tile):
+                if self.vel.x > 0:
+                    self.rect.right = tile.left
+                    self.pos.x = self.rect.x
+                    self.vel.x = 0
+                elif self.vel.x < 0:
+                    self.rect.left = tile.right
+                    self.pos.x = self.rect.x
+                    self.vel.x = 0
+
+    def check_collision_y(self, level):
+        self.on_ground = False
+        for tile in level.tiles:
+            if self.rect.colliderect(tile):
+                if self.vel.y > 0:
+                    self.rect.bottom = tile.top
+                    self.pos.y = self.rect.y
+                    self.vel.y = 0
                     self.on_ground = True
-                elif self.vy < 0:  # Прыжок вверх
-                    self.rect.top = platform.rect.bottom
-                    self.vy = 0
+                elif self.vel.y < 0:
+                    self.rect.top = tile.bottom
+                    self.pos.y = self.rect.y
+                    self.vel.y = 0
 
-    def draw(self, surface):
-        pygame.draw.rect(surface, self.color, self.rect)
+    def move_left(self):
+        self.vel.x = -self.speed
 
-# Создание стартовой локации
-player = Player(BASE_WIDTH // 2 - 25, BASE_HEIGHT - 200, 50, 50)  # Персонаж в центре
-platforms = [
-    Platform(0, BASE_HEIGHT - 50, BASE_WIDTH, 50),  # Пол
-    Platform(BASE_WIDTH // 2 - 150, BASE_HEIGHT - 200, 300, 20),  # Платформа посередине
-    Platform(BASE_WIDTH // 4 - 100, BASE_HEIGHT - 350, 200, 20),  # Платформа слева
-    Platform(3 * BASE_WIDTH // 4 - 100, BASE_HEIGHT - 350, 200, 20),  # Платформа справа
-]
+    def move_right(self):
+        self.vel.x = self.speed
 
-# Переменная для отслеживания текущего меню (главное меню, настройки или игра)
-current_menu = "main"
+    def jump(self):
+        if self.on_ground:
+            self.vel.y = self.jump_power
+            self.on_ground = False
 
-# Основной игровой цикл
-running = True
-while running:
-    mouse_pos = pygame.mouse.get_pos()  # Получаем текущую позицию курсора мыши
-    mouse_pressed = pygame.mouse.get_pressed()[0]  # Проверяем, нажата ли левая кнопка мыши
-    is_jump_held = pygame.key.get_pressed()[pygame.K_SPACE]  # Проверяем, удерживается ли пробел
+    def dash(self):
+        if self.dash_timer <= 0:
+            self.dash_timer = self.dash_cooldown
+            self.dash_time = self.dash_duration
+            self.dash_direction = 1 if self.facing_right else -1
 
-    # Обработка событий Pygame
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:  # Если пользователь закрыл окно
-            running = False  # Завершаем цикл
+    def handle_dash(self, level, dt):
+        dash_speed = DASH_DISTANCE / self.dash_duration
+        self.dash_time -= dt
+        if self.dash_time <= 0:
+            self.dash_time = 0
+            return
+        move_x = self.dash_direction * dash_speed * dt
+        old_pos = Vector2(self.pos)
+        self.pos.x += move_x
+        self.rect.x = int(self.pos.x)
+        for tile in level.tiles:
+            if self.rect.colliderect(tile):
+                if self.dash_direction > 0:
+                    self.rect.right = tile.left
+                else:
+                    self.rect.left = tile.right
+                self.pos.x = self.rect.x
+                self.dash_time = 0
+                break
 
-        if current_menu == "main":  # Если текущее меню - главное
-            if event.type == pygame.MOUSEBUTTONDOWN:  # Если нажата кнопка мыши
-                play_button_current = main_menu_buttons[0]
-                settings_button_current = main_menu_buttons[1]
-                exit_button_current = main_menu_buttons[2]
-                if play_button_current.is_hovered(mouse_pos):  # Если нажата кнопка "Играть"
-                    current_menu = "game"  # Переходим в режим игры
-                elif settings_button_current.is_hovered(mouse_pos):  # Если нажата кнопка "Настройки"
-                    current_menu = "settings"  # Переходим в меню настроек
-                elif exit_button_current.is_hovered(mouse_pos):  # Если нажата кнопка "Выход"
-                    running = False  # Завершаем цикл
+    def launch_hook(self, mouse_pos, scale_factor, offset, camera):
+        if self.hook_state:
+            return
+        self.hook_state = "extending"
+        self.hook_pos = Vector2(self.pos.x + 12, self.pos.y)
+        self.hook_origin = Vector2(self.pos.x + 12, self.pos.y)
+        adjusted_mouse_pos = Vector2(
+            (mouse_pos.x - offset.x) / scale_factor + camera.x,
+            (mouse_pos.y - offset.y) / scale_factor + camera.y
+        )
+        direction = adjusted_mouse_pos - self.hook_pos
+        if direction.length() > 0:
+            direction = direction.normalize()
+        self.hook_vel = direction * HOOK_SPEED
+        self.rope_length = 0
 
-        elif current_menu == "settings":  # Если текущее меню - настройки
-            if event.type == pygame.MOUSEBUTTONDOWN:  # Если нажата кнопка мыши
-                back_button_current = settings_menu_elements[-1]
-                if back_button_current.is_hovered(mouse_pos):  # Если нажата кнопка "Назад"
-                    current_menu = "main"  # Возвращаемся в главное меню
+    def handle_hook_motion(self, level):
+        if self.hook_state == "extending":
+            old_hook_pos = Vector2(self.hook_pos)
+            self.hook_pos += self.hook_vel
+            distance = (self.hook_pos - self.hook_origin).length()
+            if distance > HOOK_RANGE:
+                self.hook_state = "retracting"
+                self.set_retract_velocity()
+                return
+            hits = []
+            for tile in level.tiles:
+                tile_rect = pygame.Rect(tile.x, tile.y, tile.width, tile.height)
+                dx = self.hook_pos.x - old_hook_pos.x
+                dy = self.hook_pos.y - old_hook_pos.y
+                hit = False
+                hit_pos = Vector2(self.hook_pos)
+                hit_side = None
+                hit_t = float('inf')
+                if dx != 0 or dy != 0:
+                    # Проверка верхней грани
+                    if dy != 0 and old_hook_pos.y >= tile_rect.top >= self.hook_pos.y:
+                        t = (tile_rect.top - old_hook_pos.y) / dy
+                        if 0 <= t <= 1:
+                            x = old_hook_pos.x + t * dx
+                            if tile_rect.left <= x <= tile_rect.right:
+                                hit = True
+                                hit_pos = Vector2(x, tile_rect.top)
+                                hit_side = 'top'
+                                hit_t = t
+                    # Проверка нижней грани
+                    elif dy != 0 and old_hook_pos.y <= tile_rect.bottom <= self.hook_pos.y:
+                        t = (tile_rect.bottom - old_hook_pos.y) / dy
+                        if 0 <= t <= 1:
+                            x = old_hook_pos.x + t * dx
+                            if tile_rect.left <= x <= tile_rect.right:
+                                hit = True
+                                hit_pos = Vector2(x, tile_rect.bottom)
+                                hit_side = 'bottom'
+                                hit_t = t
+                    # Проверка правой грани
+                    if dx != 0 and old_hook_pos.x <= tile_rect.left <= self.hook_pos.x:
+                        t = (tile_rect.left - old_hook_pos.x) / dx
+                        if 0 <= t <= 1:
+                            y = old_hook_pos.y + t * dy
+                            if tile_rect.top <= y <= tile_rect.bottom:
+                                hit = True
+                                hit_pos = Vector2(tile_rect.left, y)
+                                hit_side = 'left'
+                                hit_t = t
+                    # Проверка левой грани
+                    elif dx != 0 and self.hook_pos.x <= tile_rect.right <= old_hook_pos.x:
+                        t = (tile_rect.right - old_hook_pos.x) / dx
+                        if 0 <= t <= 1:
+                            y = old_hook_pos.y + t * dy
+                            if tile_rect.top <= y <= tile_rect.bottom:
+                                hit = True
+                                hit_pos = Vector2(tile_rect.right, y)
+                                hit_side = 'right'
+                                hit_t = t
+                if hit:
+                    hits.append((hit_t, hit_pos, hit_side, tile_rect))
+            if hits:
+                hits.sort(key=lambda x: x[0])
+                for hit_t, hit_pos, hit_side, tile_rect in hits:
+                    valid = False
+                    offset = Vector2(0, 0)
+                    if hit_side == 'top' and self.hook_vel.y < 0:
+                        valid = True
+                        offset = Vector2(0, 2)
+                    elif hit_side == 'bottom' and self.hook_vel.y > 0:
+                        valid = True
+                        offset = Vector2(0, -2)
+                    elif hit_side == 'left' and self.hook_vel.x > 0:
+                        valid = True
+                        offset = Vector2(-2, 0)
+                    elif hit_side == 'right' and self.hook_vel.x < 0:
+                        valid = True
+                        offset = Vector2(2, 0)
+                    if not valid:
+                        normal = {'top': Vector2(0, -1), 'bottom': Vector2(0, 1), 'left': Vector2(-1, 0), 'right': Vector2(1, 0)}[hit_side]
+                        dot_product = self.hook_vel.dot(normal)
+                        if dot_product < 0:
+                            valid = True
+                            offset = {'top': Vector2(0, 2), 'bottom': Vector2(0, -2), 'left': Vector2(-2, 0), 'right': Vector2(2, 0)}[hit_side]
+                    if valid:
+                        dist_to_surface = abs({'top': hit_pos.y - tile_rect.top, 'bottom': hit_pos.y - tile_rect.bottom, 'left': hit_pos.x - tile_rect.left, 'right': hit_pos.x - tile_rect.right}[hit_side])
+                        if dist_to_surface < 10:
+                            self.hook_state = "attached"
+                            self.hook_pos = hit_pos + offset
+                            self.hook_pos.x = max(tile_rect.left, min(self.hook_pos.x, tile_rect.right))
+                            self.hook_pos.y = max(tile_rect.top, min(self.hook_pos.y, tile_rect.bottom))
+                            self.vel = Vector2(0, 0)
+                            self.swing_angle = math.atan2(self.pos.y - self.hook_pos.y, self.pos.x - self.hook_pos.x)
+                            self.swing_speed = 0
+                            self.rope_length = (self.pos - self.hook_pos).length()
+                            return
+                self.hook_state = "retracting"
+                self.set_retract_velocity()
+        elif self.hook_state == "retracting":
+            self.hook_pos += self.hook_vel
+            distance = (self.hook_pos - Vector2(self.pos.x + 12, self.pos.y)).length()
+            if distance < 10:
+                self.hook_state = None
+                self.hook_pos = None
+                self.hook_vel = None
+                self.hook_origin = None
+                self.rope_length = 0
+            else:
+                self.set_retract_velocity()
 
-        elif current_menu == "game":  # Если текущий режим - игра
-            if event.type == pygame.KEYDOWN:  # Обработка нажатий клавиш
-                if event.key == pygame.K_ESCAPE:  # Нажатие ESC возвращает в главное меню
-                    current_menu = "main"
-                elif event.key == pygame.K_SPACE and player.on_ground:  # Начало прыжка
-                    player.is_jumping = True  # Устанавливаем флаг прыжка
+    def set_retract_velocity(self):
+        direction = Vector2(self.pos.x + 12, self.pos.y) - self.hook_pos
+        if direction.length() > 0:
+            direction = direction.normalize()
+            self.hook_vel = direction * HOOK_SPEED
 
-    # Обновление состояния элементов
-    if current_menu == "main":  # Главное меню
-        for button in main_menu_buttons:
-            button.update(mouse_pos)
-    elif current_menu == "settings":  # Настройки
+    def handle_swinging(self, level):
+        keys = pygame.key.get_pressed()
+        new_rope_length = self.rope_length
+        if keys[pygame.K_w] and self.hook_state == "attached":
+            new_rope_length -= ROPE_SPEED
+        if keys[pygame.K_s] and self.hook_state == "attached":
+            new_rope_length += ROPE_SPEED
+        new_rope_length = max(MIN_ROPE_LENGTH, min(new_rope_length, HOOK_RANGE))
+        old_pos = Vector2(self.pos)
+        test_pos = Vector2(self.hook_pos.x + math.cos(self.swing_angle) * new_rope_length, self.hook_pos.y + math.sin(self.swing_angle) * new_rope_length)
+        test_rect = self.rect.copy()
+        test_rect.x = int(test_pos.x)
+        test_rect.y = int(test_pos.y)
+        collision = False
+        for tile in level.tiles:
+            if test_rect.colliderect(tile):
+                collision = True
+                break
+        if not collision:
+            self.rope_length = new_rope_length
+            self.pos = test_pos
+        else:
+            self.pos = old_pos
+        if keys[pygame.K_a] and self.hook_state == "attached":
+            self.swing_speed += SWING_SPEED
+        if keys[pygame.K_d] and self.hook_state == "attached":
+            self.swing_speed -= SWING_SPEED
+        self.swing_speed = max(min(self.swing_speed, 0.1), -0.1)
+        self.swing_speed *= 0.9
+        self.swing_angle += self.swing_speed
+        self.pos.x = self.hook_pos.x + math.cos(self.swing_angle) * self.rope_length
+        self.pos.y = self.hook_pos.y + math.sin(self.swing_angle) * self.rope_length
+        self.rect.x = int(self.pos.x)
+        self.rect.y = int(self.pos.y)
+        for tile in level.tiles:
+            if self.rect.colliderect(tile):
+                self.release_hook()
+                break
+
+    def release_hook(self):
+        if self.hook_state == "attached":
+            tangential_vel = self.swing_speed * self.rope_length
+            self.vel.x = -math.sin(self.swing_angle) * tangential_vel
+            self.vel.y = math.cos(self.swing_angle) * tangential_vel
+        self.hook_state = None
+        self.hook_pos = None
+        self.hook_vel = None
+        self.hook_origin = None
+        self.swing_angle = 0
+        self.swing_speed = 0
+        self.rope_length = 0
+
+# Класс уровня
+class Level:
+    def __init__(self):
+        self.tiles = []
+        self.width = 0
+        self.height = 0
+        self.load_level()
+
+    def load_level(self):
+        level_map = [
+            "████████████████████████████████████████████████",
+            "█                                              █",
+            "█                                              █",
+            "█          ████                                █",
+            "█                                              █",
+            "█                                              █",
+            "█      ████                                    █",
+            "█                                              █",
+            "█                                              █",
+            "█              ████                            █",
+            "█                                              █",
+            "█                                              █",
+            "█  ████                                        █",
+            "█                                              █",
+            "█                                              █",
+            "█                      ████                    █",
+            "█                                              █",
+            "█                                              █",
+            "█      ████                                    █",
+            "█                                              █",
+            "█                                              █",
+            "████████████████████████████████████████████████",
+        ]
+        self.height = len(level_map)
+        self.width = len(level_map[0]) if level_map else 0
+        for y, row in enumerate(level_map):
+            for x, tile in enumerate(row):
+                if tile == "█":
+                    self.tiles.append(pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE))
+
+    def draw(self, surface, camera, scale_factor, offset, viewport):
+        for tile in self.tiles:
+            rect = pygame.Rect(
+                int(tile.x * scale_factor + offset.x - camera.x * scale_factor),
+                int(tile.y * scale_factor + offset.y - camera.y * scale_factor),
+                int(TILE_SIZE * scale_factor),
+                int(TILE_SIZE * scale_factor)
+            )
+            if rect.colliderect(viewport):
+                pygame.draw.rect(surface, CYAN, rect, 1)
+
+# Класс HUD
+class HUD:
+    def __init__(self, player, clock):
+        self.player = player
+        self.clock = clock
+        self.update_font(scale_factor)
+
+    def update_font(self, scale_factor):
+        self.font = pygame.font.SysFont('monospace', int(36 * scale_factor))
+
+    def draw(self, surface, offset, viewport):
+        hud_x = int(offset.x + 10 * scale_factor)
+        hud_y = int(offset.y + 10 * scale_factor)
+        hook_status = "Hook: " + (self.player.hook_state or "Ready")
+        text = self.font.render(hook_status, True, WHITE)
+        text_rect = text.get_rect(topleft=(hud_x, hud_y))
+        if viewport.colliderect(text_rect):
+            surface.blit(text, text_rect)
+        fps = str(int(self.clock.get_fps()))
+        fps_text = self.font.render(f"FPS: {fps}", True, WHITE)
+        fps_rect = fps_text.get_rect(topleft=(hud_x, hud_y + int(40 * scale_factor)))
+        if viewport.colliderect(fps_rect):
+            surface.blit(fps_text, fps_rect)
+        rope_length_text = f"Rope Length: {int(self.player.rope_length)}"
+        rope_text = self.font.render(rope_length_text, True, WHITE)
+        rope_rect = rope_text.get_rect(topleft=(hud_x, hud_y + int(80 * scale_factor)))
+        if viewport.colliderect(rope_rect):
+            surface.blit(rope_text, rope_rect)
+        dash_text = f"Dash: {'Ready' if self.player.dash_timer <= 0 else f'{self.player.dash_timer:.1f}s'}"
+        dash_text_surface = self.font.render(dash_text, True, WHITE)
+        dash_rect = dash_text_surface.get_rect(topleft=(hud_x, hud_y + int(120 * scale_factor)))
+        if viewport.colliderect(dash_rect):
+            surface.blit(dash_text_surface, dash_rect)
+        health_text = f"Health: {self.player.health}"
+        health_surface = self.font.render(health_text, True, WHITE)
+        health_rect = health_surface.get_rect(topleft=(hud_x, hud_y + int(160 * scale_factor)))
+        if viewport.colliderect(health_rect):
+            surface.blit(health_surface, health_rect)
+
+# Класс игры
+class Game:
+    def __init__(self):
+        self.screen = screen
+        self.clock = pygame.time.Clock()
+        self.player = Player(100, 600)
+        self.level = Level()
+        self.camera = Vector2(0, 0)
+        self.hud = HUD(self.player, self.clock)
+        self.running = True
+        self.dt = 1 / FPS
+
+    def reset(self):
+        """Сброс состояния игры для новой сессии."""
+        self.player = Player(100, 600)
+        self.level = Level()
+        self.camera = Vector2(0, 0)
+        self.hud = HUD(self.player, self.clock)
+        self.running = True
+        self.dt = 1 / FPS
+
+    async def run(self, current_menu):
+        while self.running and current_menu[0] in ["game", "pause", "settings"]:
+            if current_menu[0] == "game":
+                self.handle_events(current_menu)
+                self.update()
+                self.draw()
+            elif current_menu[0] == "pause":
+                self.handle_pause_events(current_menu)
+                self.draw_pause()
+            elif current_menu[0] == "settings":
+                self.handle_settings_events(current_menu)
+                self.draw_settings()
+            self.clock.tick(FPS)
+            pygame.display.flip()
+            await asyncio.sleep(1.0 / FPS)
+        if not self.running:
+            current_menu[0] = "main"
+            current_menu[1] = None
+        self.reset()
+
+    def handle_events(self, current_menu):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+            elif event.type == pygame.VIDEORESIZE:
+                handle_resize(event.w, event.h)
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    current_menu[0] = "pause"
+                    current_menu[1] = "game"
+                elif event.key == pygame.K_SPACE:
+                    self.player.jump()
+                elif event.key == pygame.K_r:
+                    self.player.release_hook()
+                elif event.key == pygame.K_LSHIFT:
+                    self.player.dash()
+                elif event.key == pygame.K_h:
+                    self.player.health -= 1
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    mouse_pos = Vector2(event.pos)
+                    self.player.launch_hook(mouse_pos, scale_factor, offset, self.camera)
+            elif event.type == pygame.FINGERDOWN:
+                mouse_pos = Vector2(event.x * WIDTH, event.y * HEIGHT)
+                self.player.launch_hook(mouse_pos, scale_factor, offset, self.camera)
+        keys = pygame.key.get_pressed()
+        if self.player.hook_state != "attached" and self.player.dash_time <= 0:
+            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                self.player.move_left()
+            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                self.player.move_right()
+
+    def handle_pause_events(self, current_menu):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+            elif event.type == pygame.VIDEORESIZE:
+                handle_resize(event.w, event.h)
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    current_menu[0] = "game"
+                    current_menu[1] = None
+            elif event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.FINGERDOWN:
+                mouse_pos = Vector2(event.pos) if event.type == pygame.MOUSEBUTTONDOWN else Vector2(event.x * WIDTH, event.y * HEIGHT)
+                for button in pause_buttons:
+                    if button.is_hovered(mouse_pos):
+                        if button.text == "Продолжить":
+                            current_menu[0] = "game"
+                            current_menu[1] = None
+                        elif button.text == "Настройки":
+                            current_menu[0] = "settings"
+                            current_menu[1] = "pause"
+                        elif button.text == "Главное меню":
+                            self.running = False
+
+    def handle_settings_events(self, current_menu):
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_pressed = pygame.mouse.get_pressed()[0]
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+            elif event.type == pygame.VIDEORESIZE:
+                handle_resize(event.w, event.h)
+            elif event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.FINGERDOWN:
+                mouse_pos = Vector2(event.pos) if event.type == pygame.MOUSEBUTTONDOWN else Vector2(event.x * WIDTH, event.y * HEIGHT)
+                for element in settings_menu_elements:
+                    if isinstance(element, Button) and element.is_hovered(mouse_pos):
+                        if element.text == "Назад":
+                            if current_menu[1] == "pause":
+                                current_menu[0] = "pause"
+                                current_menu[1] = "game"
+                            else:
+                                current_menu[0] = "main"
+                                current_menu[1] = None
+        # Обновление состояния элементов меню настроек
         for element in settings_menu_elements:
             if isinstance(element, Slider):
                 element.update(mouse_pos, mouse_pressed)
-            elif isinstance(element, Option):
-                element.update(mouse_pos, mouse_pressed)
-            else:
+            elif isinstance(element, Button):
                 element.update(mouse_pos)
-    elif current_menu == "game":  # Режим игры
-        # Обновление персонажа
-        player.update(platforms, is_jump_held)
 
-    # Отрисовка
-    if background and current_menu != "game":
-        screen.blit(background, (0, 0))  # Фон для меню
-    else:
-        screen.fill(BLACK)  # Черный фон для игры или если фона нет
+    def update(self):
+        self.player.update(self.level, self.dt, pygame.key.get_pressed())
+        level_width = self.level.width * TILE_SIZE
+        level_height = self.level.height * TILE_SIZE
+        half_viewport_width = BASE_WIDTH / 2
+        half_viewport_height = BASE_HEIGHT / 2
+        self.camera.x = self.player.pos.x - half_viewport_width
+        self.camera.y = self.player.pos.y - half_viewport_height
+        self.camera.x = max(0, min(self.camera.x, level_width - BASE_WIDTH))
+        self.camera.y = max(0, min(self.camera.y, level_height - BASE_HEIGHT))
+        if level_width < BASE_WIDTH:
+            self.camera.x = (level_width - BASE_WIDTH) / 2
+        if level_height < BASE_HEIGHT:
+            self.camera.y = (level_height - BASE_HEIGHT) / 2
+        self.dt = self.clock.get_time() / 1000.0
 
-    if current_menu == "main":
-        for button in main_menu_buttons:
-            button.draw(screen)
-    elif current_menu == "settings":
+    def draw(self):
+        self.screen.fill(BLACK)
+        if level_background:
+            self.screen.blit(level_background, (int(offset.x), int(offset.y)))
+        self.level.draw(self.screen, self.camera, scale_factor, offset, viewport)
+        player_rect = pygame.Rect(
+            int(self.player.rect.x * scale_factor + offset.x - self.camera.x * scale_factor),
+            int(self.player.rect.y * scale_factor + offset.y - self.camera.y * scale_factor),
+            int(self.player.rect.width * scale_factor),
+            int(self.player.rect.height * scale_factor)
+        )
+        if viewport.colliderect(player_rect):
+            frame = self.player.get_current_frame(scale_factor)
+            self.screen.blit(frame, player_rect.topleft)
+        if self.player.hook_state:
+            hook_pos = Vector2(
+                int(self.player.hook_pos.x * scale_factor + offset.x - self.camera.x * scale_factor),
+                int(self.player.hook_pos.y * scale_factor + offset.y - self.camera.y * scale_factor)
+            )
+            player_center = Vector2(int(player_rect.centerx), int(player_rect.centery))
+            if viewport.collidepoint(hook_pos):
+                pygame.draw.line(self.screen, WHITE, player_center, hook_pos, int(2 * scale_factor))
+                pygame.draw.circle(self.screen, WHITE, (int(hook_pos.x), int(hook_pos.y)), int(5 * scale_factor))
+        self.hud.draw(self.screen, offset, viewport)
+
+    def draw_pause(self):
+        if level_background_blurred:
+            self.screen.blit(level_background_blurred, (int(offset.x), int(offset.y)))
+        else:
+            self.screen.fill((0, 0, 0, 128), special_flags=pygame.BLEND_RGBA_MULT)
+        for button in pause_buttons:
+            button.draw(self.screen)
+
+    def draw_settings(self):
+        if level_background_blurred:
+            self.screen.blit(level_background_blurred, (int(offset.x), int(offset.y)))
+        else:
+            self.screen.fill((0, 0, 0, 128), special_flags=pygame.BLEND_RGBA_MULT)
         for element in settings_menu_elements:
-            element.draw(screen)
-    elif current_menu == "game":
-        # Отрисовка платформ и персонажа
-        for platform in platforms:
-            platform.draw(screen)
-        player.draw(screen)
+            element.draw(self.screen)
 
-    pygame.display.flip()
+# Функция для обновления элементов интерфейса
+def update_ui_elements():
+    for button in main_menu_buttons:
+        button.update_rect(scale_factor, offset)
+    for element in settings_menu_elements:
+        button.update_rect(scale_factor, offset)
+    for button in pause_buttons:
+        button.update_rect(scale_factor, offset)
+    game.hud.update_font(scale_factor)
 
-# Завершение работы Pygame и программы
-pygame.quit()
-sys.exit()
+# Функция для обработки изменения размера окна
+def handle_resize(new_width, new_height):
+    global WIDTH, HEIGHT, screen, menu_background, level_background, level_background_blurred, font, scale_factor, offset, viewport
+    WIDTH, HEIGHT = new_width, new_height
+    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+    scale_factor, offset, viewport = calculate_viewport()
+    try:
+        if menu_background:
+            menu_background = scale_background(pygame.image.load('src/Assets/background_play1.png'), viewport.width, viewport.height)
+        if level_background:
+            level_background = scale_background(pygame.image.load('src/Assets/level_background.png'), viewport.width, viewport.height)
+            level_background_blurred = blur_surface(level_background, blur_radius=5)
+    except Exception as e:
+        print(f"Ошибка обновления фона: {e}")
+    font = get_scaled_font(scale_factor)
+    update_ui_elements()
+
+# Создание кнопок главного меню
+button_width = 300
+button_height = 80
+button_spacing = 20
+play_button = Button("Играть", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 - button_height - button_spacing, button_width, button_height)
+settings_button = Button("Настройки", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2, button_width, button_height)
+exit_button = Button("Выход", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 + button_height + button_spacing, button_width, button_height)
+main_menu_buttons = [play_button, settings_button, exit_button]
+
+# Создание элементов меню настроек
+volume_slider = Slider("Громкость", BASE_WIDTH // 2 + 0, BASE_HEIGHT // 2 - 80, 300, 20, 0, 100, 50)
+back_button = Button("Назад", BASE_WIDTH // 2 - button_width // 2, BASE_HEIGHT // 2 + 80, button_width, button_height)
+settings_menu_elements = [volume_slider, back_button]
+
+# Создание кнопок меню паузы
+pause_button_y = BASE_HEIGHT // 2 - button_height * 1.5
+continue_button = Button("Продолжить", BASE_WIDTH // 2 - button_width // 2, pause_button_y, button_width, button_height)
+settings_pause_button = Button("Настройки", BASE_WIDTH // 2 - button_width // 2, pause_button_y + button_height + button_spacing, button_width, button_height)
+main_menu_pause_button = Button("Главное меню", BASE_WIDTH // 2 - button_width // 2, pause_button_y + (button_height + button_spacing) * 2, button_width, button_height)
+pause_buttons = [continue_button, settings_pause_button, main_menu_pause_button]
+
+# Инициализация игры
+game = Game()
+
+# Основной игровой цикл
+async def main():
+    global current_menu
+    current_menu = ["main", None]  # Инициализация с двумя элементами: текущее состояние, предыдущее состояние
+    running = True
+    while running:
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_pressed = pygame.mouse.get_pressed()[0]
+
+        # Обработка событий
+        events = pygame.event.get()
+        for event in events:
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.VIDEORESIZE:
+                handle_resize(event.w, event.h)
+
+        if current_menu[0] == "main":
+            # Обработка событий для главного меню
+            for event in events:
+                if event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.FINGERDOWN:
+                    mouse_pos = Vector2(event.pos) if event.type == pygame.MOUSEBUTTONDOWN else Vector2(event.x * WIDTH, event.y * HEIGHT)
+                    for button in main_menu_buttons:
+                        if button.is_hovered(mouse_pos):
+                            if button.text == "Играть":
+                                game.reset()
+                                current_menu = ["game", "main"]
+                                await game.run(current_menu)
+                            elif button.text == "Настройки":
+                                current_menu = ["settings", "main"]
+                            elif button.text == "Выход":
+                                running = False
+            # Обновление состояния кнопок
+            for button in main_menu_buttons:
+                button.update(mouse_pos)
+            # Отрисовка главного меню
+            screen.fill(BLACK)
+            if menu_background:
+                screen.blit(menu_background, (int(offset.x), int(offset.y)))
+            for button in main_menu_buttons:
+                button.draw(screen)
+
+        elif current_menu[0] == "settings":
+            # Обработка событий для меню настроек
+            for event in events:
+                if event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.FINGERDOWN:
+                    mouse_pos = Vector2(event.pos) if event.type == pygame.MOUSEBUTTONDOWN else Vector2(event.x * WIDTH, event.y * HEIGHT)
+                    for button in main_menu_buttons:
+                        button.update(mouse_pos)
+                    for element in settings_menu_elements:
+                        if isinstance(element, Button) and element.is_hovered(mouse_pos):
+                            if element.text == "Назад":
+                                if current_menu[1] == "pause":
+                                    current_menu = ["pause", "game"]
+                                else:
+                                    current_menu = ["main", None]
+            # Обновление состояния элементов
+            for element in settings_menu_elements:
+                if isinstance(element, Slider):
+                    element.update(mouse_pos, mouse_pressed)
+                elif isinstance(element, Button):
+                    element.update(mouse_pos)
+            # Отрисовка меню настроек
+            screen.fill(BLACK)
+            if menu_background and (current_menu[1] is None or current_menu[1] != "pause"):
+                screen.blit(menu_background, (int(offset.x), int(offset.y)))
+            elif level_background_blurred and current_menu[1] == "pause":
+                screen.blit(level_background_blurred, (int(offset.x), int(offset.y)))
+            for element in settings_menu_elements:
+                element.draw(screen)
+
+        elif current_menu[0] in ["game", "pause", "settings"]:
+            # Обработка игры и паузы выполняется в game.run()
+            pass
+
+        pygame.display.flip()
+        await asyncio.sleep(1.0 / FPS)
+
+    pygame.quit()
+    sys.exit()
+
+if platform.system() == "Emscripten":
+    asyncio.ensure_future(main())
+else:
+    if __name__ == "__main__":
+        asyncio.run(main())
